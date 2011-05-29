@@ -12,10 +12,9 @@
 		 * Menu items and titles
 		 */
 
-			'admin:utilities:commentmoderation' => "Comentário em espera",
 			'commentmoderation' => "Moderação de Comentários",
 			'commentmoderation:approve' => "Aprovar",
-			'commentmoderation:commented_in' => "Comentário feito em %s",
+			'commentmoderation:commented_in' => "Comentário feito em",
 			'commentmoderation:comment_is_awaiting' => "Este comentário está aguardando aprovação.",
 			'commentmoderation:comments_awaiting_approval' => "Comentários aguardando aprovação: %s",
 			'commentmoderation:list' => "Lista de comentários aguardando aprovação de %s",

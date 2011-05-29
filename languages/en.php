@@ -12,19 +12,18 @@
 		 * Menu items and titles
 		 */
 
-			'admin:utilities:commentmoderation' => "Comments awaiting",
 			'commentmoderation' => "Comment Moderation",
 			'commentmoderation:approve' => "Approve",
-			'commentmoderation:commented_in' => "Commented on %s",
+			'commentmoderation:commented_in' => "Comment posted in",
 			'commentmoderation:comment_is_awaiting' => "This comment is awaiting approval.",
 			'commentmoderation:comments_awaiting_approval' => "Comments awaiting approval: %s",
 			'commentmoderation:list' => "List of comments awaiting approval from %s",
 			'commentmoderation:list_mine' => "List of comments awaiting your approval",
 			'commentmoderation:list_all' => "List of all comments awaiting approval",
-			'commentmoderation:no_comments_awaiting' => "There are no comments awaiting to be approved.",
+			'commentmoderation:no_comments_awaiting' => "No comments awaiting to be approved.",
 			'commentmoderation:admin:moderate_all_comments' => "Moderate comments",
 			'commentmoderation:allow_custom_settings' => "Allow members to use custom settings?",
-			'commentmoderation:custom_settings_not_allowed' => "The comment moderation settings are disabled.",
+			'commentmoderation:custom_settings_not_allowed' => "The settings are disabled for comment moderation",
 			'commentmoderation:moderate_subtypes' => "Which content type comments should be moderated?",
 
 		/**

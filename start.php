@@ -1,193 +1,366 @@
 <?php
-/**
-* Elgg Comment Moderation plugin
-*
-* @package ElggCommentModeration
-* @license http://www.gnu.org/licenses/old-licenses/gpl-2.0.html GNU Public License version 2
-* @author Luiz Armesto
-* @copyright Luiz Armesto 2011
-*/
 
-//@todo intercept notification message
+	/**
+	 * Elgg Comment Moderation plugin
+	 *
+	 * @package ElggCommentModeration
+	 * @license http://www.gnu.org/licenses/old-licenses/gpl-2.0.html GNU Public License version 2
+	 * @author Luiz Armesto
+	 * @copyright Luiz Armesto 2011
+	 */
+
+	/**
+	 * commentmoderation initialisation
+	 *
+	 * These parameters are required for the event API, but we won't use them:
+	 *
+	 * @param unknown_type $event
+	 * @param unknown_type $object_type
+	 * @param unknown_type $object
+	 */
+
+		function commentmoderation_init() {
+			// Load system configuration
+				global $CONFIG;
+
+			// Load the language file
+				register_translations($CONFIG->pluginspath . "commentmoderation/languages/");
+
+				if (isloggedin()) {
+            // Extend the elgg topbar
+                    elgg_extend_view('elgg_topbar/extend','commentmoderation/topbar');
+				}
 
 
-elgg_register_event_handler('init', 'system', 'commentmoderation_init');
+			// Extend system CSS with our own styles, which are defined in the commentmoderation/css view
+				elgg_extend_view('css','commentmoderation/css');
 
-function commentmoderation_init() {
-	// Load system configuration
-	global $CONFIG;
+			//
+				register_plugin_hook('action', 'comments/add', 'commentmoderation_action_comments_add');
 
-	$logged_in_user = elgg_get_logged_in_user_entity();
+			//
+				register_plugin_hook('comments', 'object', 'commentmoderation_all_comments');
 
-	//load the language file
-	register_translations($CONFIG->pluginspath . "commentmoderation/languages/");
+			// Register a page handler, so we can have nice URLs
+				register_page_handler('commentmoderation','commentmoderation_page_handler');
 
-	//extend some views
-	elgg_extend_view('css/elgg', 'commentmoderation/css');
-
-	//register a page handler
-	elgg_register_page_handler('commentmoderation','commentmoderation_page_handler');
-
-	//prevent to add moderated comments to river
-	elgg_register_plugin_hook_handler('creating', 'river', 'commentmoderation_creating_river');
-
-	//verify if the comment should await approval
-	elgg_register_event_handler('create', 'annotation', 'commentmoderation_create_annotation');
-
-	//register "comments/approve" action
-	$action_base = elgg_get_plugins_path() . 'commentmoderation/actions/comments';
-	elgg_register_action("comments/approve", "$action_base/approve.php");
-
-	if ($logged_in_user) {
-		//add topbar icon
-		$class = "elgg-icon elgg-icon-speech-bubble";
-		$text = "<span class=\"$class\"></span>";
-		//get comments awaiting
-		$num_comments = (int)commentmoderation_count_comments_awaiting(0, $logged_in_user->getGUID());
-		if ($num_comments != 0) {
-			$text .= "<span class=\"messages-new\">$num_comments</span>";
 		}
 
-		elgg_register_menu_item('topbar', array(
-			'name' => 'commentmoderation',
-			'href' => 'commentmoderation/owner/' . $logged_in_user->username,
-			'text' => $text,
-			'priority' => 600,
-		));
 
-		elgg_register_admin_menu_item('administer', 'commentmoderation', 'utilities');
-	}
-}
+		function commentmoderation_pagesetup() {
+			global $CONFIG;
+			if (get_context() == 'admin' && isadminloggedin()) {
+				add_submenu_item(elgg_echo('commentmoderation:admin:moderate_all_comments'), $CONFIG->wwwroot . 'pg/commentmoderation/all/');
+            }
+		}
 
-/**
- * commentmoderation page handler; allows the use of fancy URLs
- *
- * @param array $page From the page_handler function
- * @return true|false Depending on success
- */
-function commentmoderation_page_handler($page) {
-	// The first component of a moderation URL is the username
-	if (isset($page[0])) {
-		set_input('filter', $page[0]);
-		set_input('username', $page[1]);
-		$pages_base = elgg_get_plugins_path() . 'commentmoderation/pages/commentmoderation';
-		@include("$pages_base/list.php");
-		return true;
-	}
-	return false;
-}
 
-function commentmoderation_creating_river($hook, $action, $params, $returnvalue) {
-	$annotation = elgg_get_annotation_from_id($params['annotation_id']);
-	if ($annotation->name == 'generic_comment_awaiting') {
-		//remove the successfully posted message
-		foreach ($_SESSION['msg']['success'] as $pos => $message) {
-			if ($message == elgg_echo("generic_comment:posted")) {
-				unset($_SESSION['msg']['success'][$pos]);
-				break;
+		/**
+		 * commentmoderation page handler; allows the use of fancy URLs
+		 *
+		 * @param array $page From the page_handler function
+		 * @return TRUE|FALSE Depending on success
+		 */
+		function commentmoderation_page_handler($page) {
+			// The first component of a moderation URL is the username
+			if (isset($page[0])) {
+				set_input('filter', $page[0]);
+				set_input('username', $page[1]);
+				@include(dirname(__FILE__) . "/index.php");
+				return TRUE;
 			}
+			return FALSE;
 		}
-		//prevent to post moderated comments to river
-		return false;
-	}
-	return true;
-}
 
-function commentmoderation_create_annotation($event, $object_type, $annotation) {
-	//only modify 'generic_comment' annotations
-	if ($annotation->name != 'generic_comment') {
-		return true;
-	}
 
-	$entity = get_entity($annotation->entity_guid);
-
-	//verify the entity subtype moderation settings
-	if (!commentmoderation_is_subtype_moderated($entity->subtype, $entity->owner_guid)) {
-		return true;
-	}
-
-	//don't moderate comments from admin or entity owner
-	if ((elgg_is_admin_logged_in()) || ($entity->owner_guid == elgg_get_logged_in_user_guid())) {
-		return true;
-	}
-
-	//moderate the comment
-	if (elgg_trigger_event('moderate', 'annotation', $annotation)) {
-		$annotation->name = 'generic_comment_awaiting';
-		$result = $annotation->save();
-		system_message(elgg_echo("commentmoderation:awaiting"));
-
-		return $result;
-	}
-
-	return true;
-}
-
-function commentmoderation_is_subtype_moderated($subtype, $user_guid = 0) {
-	if (is_numeric($subtype)) {
-		$subtype = get_subtype_from_id($subtype);
-	}
-
-	//if users can change the plugin settings use the user custom settings
-	if (elgg_get_plugin_setting('allow_custom_settings', 'commentmoderation') != "no") {
-		if (elgg_get_plugin_user_setting("moderate_subtype_{$subtype}", $user_guid, 'commentmoderation') != "no") {
-			return true;
+		function commentmoderation_action_comments_add($hook, $action, $returnvalue, $params) {
+			global $CONFIG;
+$teste = "aaaa";
+		// Run our "comments/add" action instead of the original
+			if (!include($CONFIG->pluginspath . "commentmoderation/actions/add.php")) {
+				return TRUE;
+			}
+			return FALSE;
 		}
-	} else {
-		//use the global settings
-		if (elgg_get_plugin_setting("moderate_subtype_{$subtype}", 'commentmoderation') != "no") {
-			return true;
+
+
+		function commentmoderation_all_comments($hook, $entity_type, $returnvalue, $params) {
+		//display the comments
+			$comments = list_all_comments($params['entity']->getGUID(), 25, TRUE, $params['entity']->owner_guid);
+		//display how many comments are awaiting approval
+			if (isadminloggedin() || get_loggedin_userid() == $params['entity']->owner_guid) {
+				$num_comments_awaiting = count_comments_awaiting($params['entity']->getGUID());
+				$comments .= elgg_view('commentmoderation/comments_awaiting_bar',array('count' => $num_comments_awaiting));
+			}
+		//display the comment form
+			$comments .= elgg_view('comments/forms/edit',$params);
+			return $comments;
 		}
-	}
 
-	return false;
-}
 
-function commentmoderation_can_approve($comment, $user = false) {
-	if (!$user) {
-		$user = elgg_get_logged_in_user_entity();
-	}
+		function list_all_comments($entity_guid, $limit = 25, $asc = TRUE, $entity_owner_guid) {
+			if ($asc) {
+				$asc = "asc";
+			} else {
+				$asc = "desc";
+			}
 
-	//admin can approve anything
-	if ($user->isAdmin()) {
-		return true;
-	}
+			$count = count_annotations($entity_guid, "", "", "generic_comment");
 
-	//the entity owner can approve too
-	$entity = get_entity($comment->entity_guid);
-	if ($user->getGUID() == $entity->owner_guid) {
-		return true;
-	}
+			if (isadminloggedin() || get_loggedin_userid() == $entity_owner_guid) {
+				$count += count_annotations($entity_guid, "", "", "generic_comment_awaiting");
+			} else {
+				$count += count_annotations($entity_guid, "", "", "generic_comment_awaiting", "", "", get_loggedin_userid());
+			}
 
-	return false;
-}
+			$offset = (int) get_input("annoff",0);
+			$annotations = get_all_comments($entity_guid, "", "", "", "", $limit, $offset, $asc, 0, 0, $entity_owner_guid);
 
-function commentmoderation_count_comments_awaiting($guid = 0, $user_guid = false) {
-	$options = array(
-		'annotation_names' => array('generic_comment_awaiting'),
-		'count' => true
-	);
+			return elgg_view_annotation_list($annotations, $count, $offset, $limit);
+		}
 
-	if ($guid) {
-		$options['guid'] = $guid;
-	}
 
-	if ($user_guid) {
-		$options['where'] = "(e.owner_guid in ({$user_guid}))";
-	}
+		function get_all_comments($entity_guid = 0, $entity_type = "", $entity_subtype = "",
+		$value = "", $owner_guid = 0, $limit = 10, $offset = 0, $order_by = "asc", $timelower = 0, $timeupper = 0, $entity_owner_guid = 0) {
+			global $CONFIG;
 
-	return elgg_get_annotations($options);
-}
+			$timelower = (int) $timelower;
+			$timeupper = (int) $timeupper;
 
-function commentmoderation_approve($annotation) {
-	if (($annotation) && ($annotation->name == "generic_comment_awaiting") &&
-	  (commentmoderation_can_approve($annotation))) {
-		//approve it
-		$annotation->name = "generic_comment";
-		return $annotation->save();
-	}
+			if (is_array($entity_guid)) {
+				if (sizeof($entity_guid) > 0) {
+					foreach($entity_guid as $key => $val) {
+						$entity_guid[$key] = (int) $val;
+					}
+				} else {
+					$entity_guid = 0;
+				}
+			} else {
+				$entity_guid = (int)$entity_guid;
+			}
 
-	return false;
-}
+			if (is_array($entity_owner_guid)) {
+				if (sizeof($entity_owner_guid) > 0) {
+					foreach($entity_owner_guid as $key => $val) {
+						$entity_owner_guid[$key] = (int) $val;
+					}
+				} else {
+					$entity_owner_guid = 0;
+				}
+			} else {
+				$entity_owner_guid = (int)$entity_owner_guid;
+			}
+
+			$limit = (int)$limit;
+			$offset = (int)$offset;
+			if($order_by == 'asc') {
+				$order_by = "a.time_created asc";
+			}
+
+			if($order_by == 'desc') {
+				$order_by = "a.time_created desc";
+			}
+
+			$where = array();
+
+			if ($entity_guid != 0 && !is_array($entity_guid)) {
+				$where[] = "a.entity_guid=$entity_guid";
+			} else if (is_array($entity_guid)) {
+				$where[] = "a.entity_guid in (". implode(",",$entity_guid) . ")";
+			}
+
+			if ($entity_type != "") {
+				$where[] = "e.type='$entity_type'";
+			}
+
+			if ($entity_subtype != "") {
+				$where[] = "e.subtype='$entity_subtype'";
+			}
+
+			if ($owner_guid != 0 && !is_array($owner_guid)) {
+				$where[] = "a.owner_guid=$owner_guid";
+			} else {
+				if (is_array($owner_guid)) {
+					$where[] = "a.owner_guid in (" . implode(",",$owner_guid) . ")";
+				}
+			}
+
+			if ($entity_owner_guid != 0 && !is_array($entity_owner_guid)) {
+				$where[] = "e.owner_guid=$entity_owner_guid";
+			} else {
+				if (is_array($entity_owner_guid)) {
+					$where[] = "e.owner_guid in (" . implode(",",$entity_owner_guid) . ")";
+				}
+			}
+
+			if (isadminloggedin() || ((is_array($entity_owner_guid) && in_array(get_loggedin_userid(), $entity_owner_guid)) || $entity_owner_guid == get_loggedin_userid())) {
+				$where[] = "a.name_id in (" . get_metastring_id('generic_comment') . "," . get_metastring_id('generic_comment_awaiting') . ")";
+			} else {
+				$where[] = "(a.name_id=" . get_metastring_id('generic_comment') . " or (a.name_id=" . get_metastring_id('generic_comment_awaiting') . " and a.owner_guid=" . get_loggedin_userid() . "))";
+			}
+
+			if ($value != "") {
+				$where[] = "a.value_id='$value'";
+			}
+
+			if ($timelower) {
+				$where[] = "a.time_created >= {$timelower}";
+			}
+
+			if ($timeupper) {
+				$where[] = "a.time_created <= {$timeupper}";
+			}
+
+			$query = "SELECT a.*, n.string as name, v.string as value
+				FROM {$CONFIG->dbprefix}annotations a
+				JOIN {$CONFIG->dbprefix}entities e on a.entity_guid = e.guid
+				JOIN {$CONFIG->dbprefix}metastrings v on a.value_id=v.id
+				JOIN {$CONFIG->dbprefix}metastrings n on a.name_id = n.id where ";
+
+			foreach ($where as $w) {
+				$query .= " $w and ";
+			}
+			$query .= get_access_sql_suffix("a"); // Add access controls
+			$query .= " order by $order_by limit $offset,$limit"; // Add order and limit
+
+			return get_data($query, "row_to_elggannotation");
+		}
+
+
+		function count_comments_awaiting($entity_guid, $entity_type = "", $entity_subtype = "", $value = "", $value_type = "", $owner_guid = 0, $timelower = 0, $timeupper = 0, $entity_owner_guid = 0) {
+			global $CONFIG;
+
+			$name = "generic_comment_awaiting";
+			$sum = "count";
+
+			$sum = sanitise_string($sum);
+			$entity_guid = (int)$entity_guid;
+			$entity_type = sanitise_string($entity_type);
+			$timeupper = (int)$timeupper;
+			$timelower = (int)$timelower;
+			$entity_subtype = get_subtype_id($entity_type, $entity_subtype);
+			if ($name != '' AND !$name = get_metastring_id($name)) {
+				return 0;
+			}
+
+			if ($value != '' AND !$value = get_metastring_id($value)) {
+				return 0;
+			}
+			$value_type = sanitise_string($value_type);
+			$owner_guid = (int)$owner_guid;
+
+			if (is_array($entity_owner_guid)) {
+				if (sizeof($entity_owner_guid) > 0) {
+					foreach($entity_owner_guid as $key => $val) {
+						$entity_owner_guid[$key] = (int) $val;
+					}
+				} else {
+					$entity_owner_guid = 0;
+				}
+			} else {
+				$entity_owner_guid = (int)$entity_owner_guid;
+			}
+
+			// if (empty($name)) return 0;
+
+			$where = array();
+
+			if ($entity_guid) {
+				$where[] = "e.guid=$entity_guid";
+			}
+
+			if ($entity_type!="") {
+				$where[] = "e.type='$entity_type'";
+			}
+
+			if ($entity_subtype) {
+				$where[] = "e.subtype=$entity_subtype";
+			}
+
+			if ($entity_owner_guid != 0 && !is_array($entity_owner_guid)) {
+				$where[] = "e.owner_guid=$entity_owner_guid";
+			} else {
+				if (is_array($entity_owner_guid)) {
+					$where[] = "e.owner_guid in (" . implode(",",$entity_owner_guid) . ")";
+				}
+			}
+
+			if ($name!="") {
+				$where[] = "a.name_id='$name'";
+			}
+
+			if ($value!="") {
+				$where[] = "a.value_id='$value'";
+			}
+
+			if ($value_type!="") {
+				$where[] = "a.value_type='$value_type'";
+			}
+
+			if ($owner_guid) {
+				$where[] = "a.owner_guid='$owner_guid'";
+			}
+
+			if ($timelower) {
+				$where[] = "a.time_created >= {$timelower}";
+			}
+
+			if ($timeupper) {
+				$where[] = "a.time_created <= {$timeupper}";
+			}
+
+			if ($sum != "count") {
+				$where[] = "a.value_type='integer'"; // Limit on integer types
+			}
+
+			$query = "SELECT $sum(ms.string) as sum
+				FROM {$CONFIG->dbprefix}annotations a
+				JOIN {$CONFIG->dbprefix}entities e on a.entity_guid = e.guid
+				JOIN {$CONFIG->dbprefix}metastrings ms on a.value_id=ms.id WHERE ";
+
+			foreach ($where as $w) {
+				$query .= " $w and ";
+			}
+
+			$query .= get_access_sql_suffix("a"); // now add access
+			$query .= ' and ' . get_access_sql_suffix("e"); // now add access
+
+			$row = get_data_row($query);
+			if ($row) {
+				return $row->sum;
+			}
+
+			return FALSE;
+		}
+
+
+		function is_subtype_comments_moderated($subtype, $user_guid = 0) {
+			if (is_numeric($subtype)) {
+				$subtype = get_subtype_from_id($subtype);
+			}
+
+		// If users can change the plugin settings use the user custom settings
+			if (get_plugin_setting('allow_custom_settings', 'commentmoderation') != "no") {
+				if (get_plugin_usersetting("moderate_subtype_{$subtype}", $user_guid, 'commentmoderation') != "no") {
+					return TRUE;
+				}
+			} else {
+		// Use the global settings
+				if (get_plugin_setting("moderate_subtype_{$subtype}", 'commentmoderation') != "no") {
+					return TRUE;
+				}
+			}
+
+			return FALSE;
+		}
+
+
+	// Make sure the commentmoderation initialisation function is called on initialisation
+		register_elgg_event_handler('init', 'system', 'commentmoderation_init');
+		register_elgg_event_handler('pagesetup', 'system', 'commentmoderation_pagesetup');
+
+	// Register actions
+		global $CONFIG;
+		register_action("comments/approve", FALSE, $CONFIG->pluginspath . "commentmoderation/actions/approve.php");
 
 ?>
